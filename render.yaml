@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: god-money-bot
+    env: node
+    plan: free
+    rootDir: god-money-bot
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: TELEGRAM_SECRET_PATH
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: INFOMONEY_BASE_URL
+        value: https://www.infomoney.com.br
+      - key: INFOMONEY_MARKETS_URL
+        value: https://www.infomoney.com.br/mercados/
+      - key: INFOMONEY_SEARCH_URL
+        value: https://www.infomoney.com.br/?s=
+      - key: NEWS_ITEMS_LIMIT
+        value: 5
