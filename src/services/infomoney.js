@@ -118,6 +118,10 @@ async function fetchHtml(url) {
   }
 }
 
+function isRateLimitError(error) {
+  return /429|rate limit|too many/i.test(String(error?.message || error || ''));
+}
+
 function collectArticlesFromHtml(html, limit = config.newsItemsLimit) {
   const $ = cheerio.load(html);
   const items = [];
@@ -177,9 +181,30 @@ export async function getLatestNews({
     }
   }
 
-  const fresh = normalizedTopic
-    ? await searchByQuery(normalizedTopic, limit)
-    : await readMarketsPage(limit);
+  let fresh = [];
+  try {
+    fresh = normalizedTopic
+      ? await searchByQuery(normalizedTopic, limit)
+      : await readMarketsPage(limit);
+  } catch (error) {
+    const fallbackCached = await getCachedNews({
+      topic: normalizedTopic,
+      limit,
+      maxAgeMinutes: config.newsCacheFallbackTtlMinutes,
+    });
+
+    if (fallbackCached.length) {
+      return fallbackCached;
+    }
+
+    if (isRateLimitError(error)) {
+      console.warn('Fonte principal em rate limit; respondendo sem quebrar o bot.');
+      return [];
+    }
+
+    console.warn('Falha ao buscar notícias na fonte principal:', error.message);
+    return [];
+  }
 
   let finalFresh = fresh;
   if (finalFresh.length < Math.min(limit, 3)) {
