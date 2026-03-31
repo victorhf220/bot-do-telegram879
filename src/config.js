@@ -39,6 +39,10 @@ export const config = {
     process.env.NEWS_CACHE_FALLBACK_TTL_MINUTES,
     360,
   ),
+  serperApiKey: process.env.SERPER_API_KEY || '',
+  serperSearchEndpoint:
+    process.env.SERPER_SEARCH_ENDPOINT || 'https://google.serper.dev/search',
+  serperResultsLimit: toNumber(process.env.SERPER_RESULTS_LIMIT, 5),
 };
 
 export function validateConfig() {

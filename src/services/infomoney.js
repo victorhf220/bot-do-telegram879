@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { config } from '../config.js';
 import { getCachedNews, upsertNewsCache } from './supabase.js';
+import { hasSerperConfigured, searchWithSerper } from './serper.js';
 import { trimText } from '../utils/formatters.js';
 
 const MARKET_KEYWORDS = [
@@ -81,6 +82,22 @@ function normalizeArticle(item, topicHint = '') {
 
 function mergePrioritizingNewest(primary = [], secondary = [], limit = config.newsItemsLimit) {
   return uniqueByUrl([...primary, ...secondary]).slice(0, limit);
+}
+
+async function getSerperFallback(query, limit = config.newsItemsLimit) {
+  if (!hasSerperConfigured()) {
+    return [];
+  }
+
+  try {
+    const tunedQuery = query?.trim()
+      ? `${query} site:infomoney.com.br mercado financeiro ações brasil`
+      : 'site:infomoney.com.br mercado financeiro ações ibovespa brasil';
+    return await searchWithSerper(tunedQuery, limit);
+  } catch (error) {
+    console.warn('Serper fallback indisponível:', error.message);
+    return [];
+  }
 }
 
 async function fetchHtml(url) {
@@ -164,15 +181,21 @@ export async function getLatestNews({
     ? await searchByQuery(normalizedTopic, limit)
     : await readMarketsPage(limit);
 
-  await upsertNewsCache(fresh);
+  let finalFresh = fresh;
+  if (finalFresh.length < Math.min(limit, 3)) {
+    const serperFallback = await getSerperFallback(normalizedTopic, limit);
+    finalFresh = mergePrioritizingNewest(finalFresh, serperFallback, limit);
+  }
 
-  if (fresh.length) {
+  await upsertNewsCache(finalFresh);
+
+  if (finalFresh.length) {
     const fallbackCached = await getCachedNews({
       topic: normalizedTopic,
       limit,
       maxAgeMinutes: config.newsCacheFallbackTtlMinutes,
     });
-    return mergePrioritizingNewest(fresh, fallbackCached, limit);
+    return mergePrioritizingNewest(finalFresh, fallbackCached, limit);
   }
 
   return getCachedNews({

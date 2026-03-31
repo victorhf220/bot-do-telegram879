@@ -44,6 +44,7 @@ Em desenvolvimento, se `BASE_URL` não estiver definida, o bot usa **long pollin
 - `TELEGRAM_SECRET_PATH` → caminho opcional do webhook
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` ou `SUPABASE_ANON_KEY`
+- `SERPER_API_KEY` (opcional, recomendado para fallback de busca)
 
 ## Deploy no Render
 
@@ -124,6 +125,7 @@ docs/obsidian/05-Supabase/SQL-e-Policies-Anon-Key.md
 - Se a estrutura do site mudar, a lógica de scraping pode precisar de ajuste.
 - Em produção no Render, o ideal é usar **webhook**.
 - A arquitetura atual do projeto já foi ajustada para **cache first, AI second**, priorizando Supabase + regras determinísticas antes de qualquer camada de IA.
+- Quando configurada, a **Serper API** entra como fallback inteligente para enriquecer resultados sem depender de IA cara.
 
 ## Obsidian
 
