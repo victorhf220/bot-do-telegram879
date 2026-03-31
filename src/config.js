@@ -21,6 +21,8 @@ export const config = {
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
   supabaseInteractionsTable:
     process.env.SUPABASE_TABLE_INTERACTIONS || 'bot_interactions',
+  supabaseNewsCacheTable:
+    process.env.SUPABASE_TABLE_NEWS_CACHE || 'news_cache',
   infomoneyBaseUrl:
     (process.env.INFOMONEY_BASE_URL || 'https://www.infomoney.com.br').replace(
       /\/$/,
@@ -32,6 +34,11 @@ export const config = {
     process.env.INFOMONEY_SEARCH_URL || 'https://www.infomoney.com.br/?s=',
   infomoneyTimeoutMs: toNumber(process.env.INFOMONEY_TIMEOUT_MS, 15000),
   newsItemsLimit: toNumber(process.env.NEWS_ITEMS_LIMIT, 5),
+  newsCacheTtlMinutes: toNumber(process.env.NEWS_CACHE_TTL_MINUTES, 30),
+  newsCacheFallbackTtlMinutes: toNumber(
+    process.env.NEWS_CACHE_FALLBACK_TTL_MINUTES,
+    360,
+  ),
 };
 
 export function validateConfig() {

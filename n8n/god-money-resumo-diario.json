@@ -1,0 +1,168 @@
+{
+  "name": "God Money - Resumo Diário da Bolsa",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 8,18 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "0b3e9b3d-7a3e-43f8-a8e4-4f59f1d91a01",
+      "name": "Agendar Resumo",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "feed_url",
+              "type": "string",
+              "value": "https://www.infomoney.com.br/feed/"
+            },
+            {
+              "name": "chat_id",
+              "type": "string",
+              "value": "COLOQUE_AQUI_O_CHAT_ID"
+            },
+            {
+              "name": "bot_name",
+              "type": "string",
+              "value": "God Money"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "87f956a0-eafd-466c-9d83-c6aa334d87f8",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.feed_url }}"
+      },
+      "id": "2d110b75-5a3a-4bcf-9f74-76e7a4e55e80",
+      "name": "Ler RSS InfoMoney",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const keywords = ['bolsa', 'mercado', 'ibovespa', 'acao', 'ações', 'dólar', 'juros', 'copom', 'dividendo', 'resultado'];\nconst items = $input.all();\n\nconst normalized = items.map(item => {\n  const json = item.json || {};\n  return {\n    title: json.title || json.creator || 'Sem título',\n    link: json.link || json.guid || '',\n    pubDate: json.pubDate || json.isoDate || '',\n    content: [json.title, json.contentSnippet, json.content, json.categories].filter(Boolean).join(' ').toLowerCase(),\n  };\n});\n\nconst filtered = normalized\n  .filter(item => keywords.some(keyword => item.content.includes(keyword)))\n  .slice(0, 5);\n\nconst selected = filtered.length ? filtered : normalized.slice(0, 5);\n\nconst intro = '💸 *God Money — Resumo diário da bolsa*\\n\\nPrincipais destaques do momento:';\nconst body = selected.map((item, index) => {\n  const title = String(item.title).replace(/\n+/g, ' ').trim();\n  return `${index + 1}. ${title}\\n${item.link}`;\n}).join('\\n\\n');\n\nconst text = `${intro}\\n\\n${body}\\n\\nFonte: InfoMoney`;\n\nreturn [{ json: { text } }];"
+      },
+      "id": "dca2b2f7-5e33-48f8-b19c-fd07c0b25a4e",
+      "name": "Montar Mensagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Config').item.json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "ed8c5477-cde3-4e8f-b5c8-fcd0211f219c",
+      "name": "Enviar no Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1180,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Agendar Resumo": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Ler RSS InfoMoney",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler RSS InfoMoney": {
+      "main": [
+        [
+          {
+            "node": "Montar Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Mensagem": {
+      "main": [
+        [
+          {
+            "node": "Enviar no Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "f4efc5fb-2f34-45b6-bf8b-c4fd9ea0c001",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false,
+  "tags": []
+}

@@ -1,6 +1,26 @@
 import * as cheerio from 'cheerio';
 import { config } from '../config.js';
+import { getCachedNews, upsertNewsCache } from './supabase.js';
 import { trimText } from '../utils/formatters.js';
+
+const MARKET_KEYWORDS = [
+  'bolsa',
+  'mercado',
+  'ibovespa',
+  'acao',
+  'ações',
+  'dólar',
+  'juros',
+  'copom',
+  'fed',
+  'inflação',
+  'dividendo',
+  'resultado',
+  'vale3',
+  'petr4',
+  'b3sa3',
+  'itub4',
+];
 
 const defaultHeaders = {
   'user-agent':
@@ -36,6 +56,31 @@ function uniqueByUrl(items) {
     seen.add(item.url);
     return true;
   });
+}
+
+function extractTicker(text = '') {
+  const match = String(text).toUpperCase().match(/\b[A-Z]{4}[0-9]{1,2}\b/);
+  return match?.[0] || '';
+}
+
+function extractKeywords(text = '', topicHint = '') {
+  const source = `${text} ${topicHint}`.toLowerCase();
+  return [...new Set(MARKET_KEYWORDS.filter((keyword) => source.includes(keyword)))];
+}
+
+function normalizeArticle(item, topicHint = '') {
+  const mergedText = [item.title, item.summary, topicHint].filter(Boolean).join(' ');
+  return {
+    ...item,
+    source: item.source || 'InfoMoney',
+    topicHint,
+    ticker: extractTicker(mergedText),
+    keywords: extractKeywords(mergedText, topicHint),
+  };
+}
+
+function mergePrioritizingNewest(primary = [], secondary = [], limit = config.newsItemsLimit) {
+  return uniqueByUrl([...primary, ...secondary]).slice(0, limit);
 }
 
 async function fetchHtml(url) {
@@ -74,10 +119,16 @@ function collectArticlesFromHtml(html, limit = config.newsItemsLimit) {
       220,
     );
 
+    const publishedAt =
+      anchor.closest('article, div, li, section').find('time').first().attr('datetime') ||
+      trimText(anchor.closest('article, div, li, section').find('time').first().text(), 80);
+
     items.push({
       title,
       summary,
       url: href,
+      publishedAt,
+      source: 'InfoMoney',
     });
   });
 
@@ -87,26 +138,58 @@ function collectArticlesFromHtml(html, limit = config.newsItemsLimit) {
 async function searchByQuery(query, limit = config.newsItemsLimit) {
   const url = `${config.infomoneySearchUrl}${encodeURIComponent(query)}`;
   const html = await fetchHtml(url);
-  return collectArticlesFromHtml(html, limit);
+  return collectArticlesFromHtml(html, limit).map((item) => normalizeArticle(item, query));
 }
 
-export async function getLatestNews({ topic = '', limit = config.newsItemsLimit } = {}) {
-  if (topic?.trim()) {
-    return searchByQuery(topic.trim(), limit);
+async function readMarketsPage(limit = config.newsItemsLimit) {
+  const html = await fetchHtml(config.infomoneyMarketsUrl);
+  return collectArticlesFromHtml(html, limit).map((item) => normalizeArticle(item, 'mercado'));
+}
+
+export async function getLatestNews({
+  topic = '',
+  limit = config.newsItemsLimit,
+  forceRefresh = false,
+} = {}) {
+  const normalizedTopic = topic?.trim() || '';
+
+  if (!forceRefresh) {
+    const cached = await getCachedNews({ topic: normalizedTopic, limit });
+    if (cached.length >= Math.min(limit, 3)) {
+      return cached;
+    }
   }
 
-  const html = await fetchHtml(config.infomoneyMarketsUrl);
-  return collectArticlesFromHtml(html, limit);
+  const fresh = normalizedTopic
+    ? await searchByQuery(normalizedTopic, limit)
+    : await readMarketsPage(limit);
+
+  await upsertNewsCache(fresh);
+
+  if (fresh.length) {
+    const fallbackCached = await getCachedNews({
+      topic: normalizedTopic,
+      limit,
+      maxAgeMinutes: config.newsCacheFallbackTtlMinutes,
+    });
+    return mergePrioritizingNewest(fresh, fallbackCached, limit);
+  }
+
+  return getCachedNews({
+    topic: normalizedTopic,
+    limit,
+    maxAgeMinutes: config.newsCacheFallbackTtlMinutes,
+  });
 }
 
 export async function getTickerNews(tickerOrCompany) {
   const query = tickerOrCompany?.trim();
   if (!query) return [];
-  return searchByQuery(query, 3);
+  return getLatestNews({ topic: query, limit: 3 });
 }
 
 export async function getIbovSummary() {
-  const items = await searchByQuery('ibovespa', 4);
+  const items = await getLatestNews({ topic: 'ibovespa', limit: 4 });
   return {
     headline: 'Resumo do Ibovespa com base em notícias recentes',
     items,
@@ -115,11 +198,11 @@ export async function getIbovSummary() {
 }
 
 export async function getEconomicAgenda() {
-  return searchByQuery('agenda econômica mercado copom fed inflação payroll', 5);
+  return getLatestNews({ topic: 'agenda econômica mercado copom fed inflação payroll', limit: 5 });
 }
 
 export async function getMarketSummary() {
-  const items = await searchByQuery('mercado ibovespa dólar juros bolsa', 4);
+  const items = await getLatestNews({ topic: 'mercado ibovespa dólar juros bolsa', limit: 4 });
   return {
     title: 'Resumo rápido do mercado',
     highlights: items.map((item) => item.title),

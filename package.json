@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/bot.js && node --check src/services/infomoney.js"
+    "check": "node --check src/index.js && node --check src/bot.js && node --check src/config.js && node --check src/services/infomoney.js && node --check src/services/supabase.js"
   },
   "engines": {
     "node": ">=20.0.0"

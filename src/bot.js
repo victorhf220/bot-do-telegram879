@@ -6,15 +6,35 @@ import {
   getMarketSummary,
   getTickerNews,
 } from './services/infomoney.js';
-import { saveInteraction } from './services/supabase.js';
+import {
+  addTickerToWatchlist,
+  getOrCreateUser,
+  getPlanLimits,
+  getUserWatchlist,
+  removeTickerFromWatchlist,
+  saveInteraction,
+  updateUserProfileType,
+} from './services/supabase.js';
 import {
   formatArticleList,
   formatMarketBriefing,
   formatMenuMessage,
+  formatPlanMessage,
+  formatProfileMessage,
+  formatRadarMessage,
+  formatUpgradeMessage,
   formatWelcomeMessage,
+  formatWatchlistMessage,
 } from './utils/formatters.js';
 
 const BOT_NAME = 'God Money';
+const PROFILE_OPTIONS = new Set([
+  'geral',
+  'executivo',
+  'trader',
+  'patrimonial',
+  'longo_prazo',
+]);
 
 const BOT_COMMANDS = [
   { command: 'start', description: 'Iniciar e ver os comandos' },
@@ -24,6 +44,11 @@ const BOT_COMMANDS = [
   { command: 'acao', description: 'Notícias de uma ação' },
   { command: 'agenda', description: 'Agenda econômica do dia' },
   { command: 'resumo', description: 'Resumo rápido do mercado' },
+  { command: 'perfil', description: 'Define seu perfil de leitura' },
+  { command: 'watchlist', description: 'Gerencia seus ativos' },
+  { command: 'radar', description: 'Radar baseado na watchlist' },
+  { command: 'plano', description: 'Mostra plano e limites' },
+  { command: 'upgrade', description: 'Mostra recursos premium' },
 ];
 
 async function replyAndLog(ctx, {
@@ -55,6 +80,33 @@ function extractCommandArgument(text = '') {
   return parts.slice(1).join(' ').trim();
 }
 
+function normalizeProfileInput(value = '') {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+
+  if (normalized === 'empresario') return 'executivo';
+  if (normalized === 'milionario') return 'patrimonial';
+  if (PROFILE_OPTIONS.has(normalized)) return normalized;
+  return '';
+}
+
+function normalizeTicker(value = '') {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+async function getUserState(ctx) {
+  return getOrCreateUser({
+    telegramUserId: ctx.from?.id,
+    username: ctx.from?.username,
+    firstName: ctx.from?.first_name,
+  });
+}
+
 export function createBot(token) {
   const bot = new Telegraf(token);
 
@@ -78,9 +130,17 @@ export function createBot(token) {
   });
 
   bot.start(async (ctx) => {
+    const user = await getUserState(ctx);
+    const watchlist = await getUserWatchlist({ telegramUserId: user.telegram_user_id });
+
     await replyAndLog(ctx, {
       command: '/start',
-      message: formatWelcomeMessage(BOT_NAME),
+      message: formatWelcomeMessage(BOT_NAME, {
+        firstName: user.first_name,
+        profileType: user.profile_type,
+        plan: user.plan,
+        watchlistCount: watchlist.length,
+      }),
       source: 'system',
     });
   });
@@ -90,6 +150,161 @@ export function createBot(token) {
       command: '/menu',
       message: formatMenuMessage(),
       source: 'system',
+    });
+  });
+
+  bot.command('perfil', async (ctx) => {
+    const user = await getUserState(ctx);
+    const requestedProfile = normalizeProfileInput(extractCommandArgument(ctx.message?.text));
+
+    if (!requestedProfile) {
+      await replyAndLog(ctx, {
+        command: '/perfil',
+        message: [
+          '🧭 <b>Escolha seu perfil</b>',
+          '',
+          'Use:',
+          '• <code>/perfil geral</code>',
+          '• <code>/perfil executivo</code>',
+          '• <code>/perfil trader</code>',
+          '• <code>/perfil patrimonial</code>',
+          '• <code>/perfil longo_prazo</code>',
+        ].join('\n'),
+        source: 'system',
+      });
+      return;
+    }
+
+    const updatedUser = await updateUserProfileType({
+      telegramUserId: user.telegram_user_id,
+      profileType: requestedProfile,
+    });
+
+    await replyAndLog(ctx, {
+      command: '/perfil',
+      message: formatProfileMessage(updatedUser),
+      source: 'system',
+    });
+  });
+
+  bot.command('watchlist', async (ctx) => {
+    const user = await getUserState(ctx);
+    const args = extractCommandArgument(ctx.message?.text);
+    const [actionRaw, tickerRaw = ''] = args.split(/\s+/, 2);
+    const action = (actionRaw || 'list').toLowerCase();
+    const ticker = normalizeTicker(tickerRaw);
+    const limits = getPlanLimits(user.plan);
+
+    if (!args || action === 'list') {
+      const watchlist = await getUserWatchlist({ telegramUserId: user.telegram_user_id });
+      await replyAndLog(ctx, {
+        command: '/watchlist',
+        message: formatWatchlistMessage({ watchlist, limit: limits.watchlist }),
+        source: 'system',
+      });
+      return;
+    }
+
+    if (action === 'add') {
+      const result = await addTickerToWatchlist({
+        telegramUserId: user.telegram_user_id,
+        ticker,
+        plan: user.plan,
+      });
+
+      const reasonMap = {
+        invalid_ticker: 'Ticker inválido. Ex.: <code>/watchlist add PETR4</code>',
+        already_exists: 'Esse ativo já está na sua watchlist.',
+        limit_reached:
+          'Você atingiu o limite da sua watchlist atual. Use <code>/upgrade</code> para ampliar.',
+      };
+
+      const extra = result.reason ? `${reasonMap[result.reason]}\n\n` : `✅ <b>${ticker}</b> adicionado à sua watchlist.\n\n`;
+      await replyAndLog(ctx, {
+        command: '/watchlist',
+        message: `${extra}${formatWatchlistMessage({
+          watchlist: result.watchlist || [],
+          limit: result.limit || limits.watchlist,
+        })}`,
+        source: 'system',
+      });
+      return;
+    }
+
+    if (action === 'remove') {
+      const result = await removeTickerFromWatchlist({
+        telegramUserId: user.telegram_user_id,
+        ticker,
+      });
+
+      const prefix = result.removed
+        ? `🗑️ <b>${ticker}</b> removido da sua watchlist.\n\n`
+        : 'Esse ativo não estava na sua watchlist.\n\n';
+
+      await replyAndLog(ctx, {
+        command: '/watchlist',
+        message: `${prefix}${formatWatchlistMessage({
+          watchlist: result.watchlist || [],
+          limit: limits.watchlist,
+        })}`,
+        source: 'system',
+      });
+      return;
+    }
+
+    await replyAndLog(ctx, {
+      command: '/watchlist',
+      message:
+        'Use <code>/watchlist list</code>, <code>/watchlist add PETR4</code> ou <code>/watchlist remove PETR4</code>.',
+      source: 'system',
+    });
+  });
+
+  bot.command('plano', async (ctx) => {
+    const user = await getUserState(ctx);
+    await replyAndLog(ctx, {
+      command: '/plano',
+      message: formatPlanMessage({ plan: user.plan, limits: getPlanLimits(user.plan) }),
+      source: 'system',
+    });
+  });
+
+  bot.command('upgrade', async (ctx) => {
+    await replyAndLog(ctx, {
+      command: '/upgrade',
+      message: formatUpgradeMessage(),
+      source: 'system',
+    });
+  });
+
+  bot.command('radar', async (ctx) => {
+    const user = await getUserState(ctx);
+    const watchlist = await getUserWatchlist({ telegramUserId: user.telegram_user_id });
+
+    if (!watchlist.length) {
+      await replyAndLog(ctx, {
+        command: '/radar',
+        message:
+          'Você ainda não montou sua watchlist. Comece com <code>/watchlist add VALE3</code> e depois use <code>/radar</code>.',
+        source: 'system',
+      });
+      return;
+    }
+
+    const cappedWatchlist = watchlist.slice(0, Math.min(getPlanLimits(user.plan).watchlist, 8));
+    const [marketSummary, ...tickerNews] = await Promise.all([
+      getMarketSummary(),
+      ...cappedWatchlist.map((ticker) => getTickerNews(ticker)),
+    ]);
+
+    const entries = cappedWatchlist
+      .map((ticker, index) => ({ ticker, items: tickerNews[index] || [] }))
+      .filter((entry) => entry.items.length);
+
+    await replyAndLog(ctx, {
+      command: '/radar',
+      message: formatRadarMessage({ user, entries, marketSummary }),
+      source: 'InfoMoney',
     });
   });
 
@@ -146,8 +361,17 @@ export function createBot(token) {
   });
 
   bot.command('resumo', async (ctx) => {
+    const user = await getUserState(ctx);
+    const watchlist = await getUserWatchlist({ telegramUserId: user.telegram_user_id });
     const summary = await getMarketSummary();
-    const message = formatMarketBriefing(summary);
+    const enrichedSummary = {
+      ...summary,
+      nextWatch:
+        watchlist.length > 0
+          ? `Observe especialmente: ${watchlist.slice(0, 3).join(', ')}`
+          : summary.nextWatch,
+    };
+    const message = formatMarketBriefing(enrichedSummary);
 
     await replyAndLog(ctx, {
       command: '/resumo',
